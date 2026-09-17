@@ -2,38 +2,46 @@ import { NextRequest, NextResponse } from 'next/server';
 import { DocumentChunk } from '@/types/document';
 import { answerDocumentQuestion } from '@/lib/ai/answerQuestion';
 import { getUserSafeErrorMessage } from '@/lib/validation/userSafeError';
+import { ChatRequestSchema } from '@/lib/validation/clauseSchema';
+import { enforceRateLimit } from '@/lib/security/rateLimiter';
 
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   try {
+    const rateLimitRes = enforceRateLimit(req, 60);
+    if (rateLimitRes) return rateLimitRes;
+
     const customApiKey =
       req.headers.get('x-nvidia-api-key') ||
       req.headers.get('x-openrouter-api-key') ||
       req.headers.get('x-anthropic-api-key') ||
       undefined;
-    const body = await req.json();
-    const question = body.question as string | undefined;
-    const chunks = body.chunks as DocumentChunk[] | undefined;
-    const rawText = body.rawText as string | undefined;
 
-    if (!question || question.trim().length === 0) {
-      return NextResponse.json({ error: 'Question cannot be empty.' }, { status: 400 });
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: 'Invalid JSON request payload.' }, { status: 400 });
     }
 
-    if (!chunks || chunks.length === 0) {
-      return NextResponse.json({ error: 'Document chunks are required for Q&A.' }, { status: 400 });
+    const parsed = ChatRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      const issueMsg = parsed.error.issues[0]?.message || 'Invalid question or document chunks.';
+      return NextResponse.json({ error: issueMsg }, { status: 400 });
     }
+
+    const { question, chunks, rawText } = parsed.data;
 
     const skipCache =
-      body.skipCache === true ||
-      body.forceRefresh === true ||
+      parsed.data.skipCache === true ||
+      parsed.data.forceRefresh === true ||
       req.headers.get('x-skip-cache') === 'true' ||
       req.headers.get('x-force-refresh') === 'true';
 
     const chatResponse = await answerDocumentQuestion(
       question.trim(),
-      chunks,
+      chunks as unknown as DocumentChunk[],
       rawText || '',
       { customApiKey, skipCache }
     );

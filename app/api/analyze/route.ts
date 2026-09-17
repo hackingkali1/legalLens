@@ -3,38 +3,44 @@ import { LegalLensDocument } from '@/types/document';
 import { generateDocumentSummary } from '@/lib/ai/analyzeDocument';
 import { detectAndClassifyClauses } from '@/lib/ai/analyzeClauses';
 import { getUserSafeErrorMessage, logAnalysisDiagnostic } from '@/lib/validation/userSafeError';
+import { AnalyzeRequestSchema } from '@/lib/validation/clauseSchema';
+import { enforceRateLimit } from '@/lib/security/rateLimiter';
 
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   try {
+    const rateLimitRes = enforceRateLimit(req, 60);
+    if (rateLimitRes) return rateLimitRes;
+
     const customApiKey =
       req.headers.get('x-nvidia-api-key') ||
       req.headers.get('x-openrouter-api-key') ||
       req.headers.get('x-anthropic-api-key') ||
       undefined;
 
-    let body: Record<string, unknown>;
+    let body: unknown;
     try {
-      body = (await req.json()) as Record<string, unknown>;
+      body = await req.json();
     } catch {
       return NextResponse.json({ error: 'Invalid JSON body.' }, { status: 400 });
     }
 
-    const doc = body.document as LegalLensDocument | undefined;
-    const step = (body.step as 'all' | 'summary' | 'clauses' | undefined) || 'all';
-    const skipCache =
-      body.skipCache === true ||
-      body.forceRefresh === true ||
-      req.headers.get('x-skip-cache') === 'true' ||
-      req.headers.get('x-force-refresh') === 'true';
-
-    if (!doc || !doc.rawText || !doc.sections) {
+    const parsedBody = AnalyzeRequestSchema.safeParse(body);
+    if (!parsedBody.success) {
       return NextResponse.json(
         { error: 'Valid document structure with text and sections is required.' },
         { status: 400 }
       );
     }
+
+    const doc = parsedBody.data.document as unknown as LegalLensDocument;
+    const step = parsedBody.data.step;
+    const skipCache =
+      parsedBody.data.skipCache === true ||
+      parsedBody.data.forceRefresh === true ||
+      req.headers.get('x-skip-cache') === 'true' ||
+      req.headers.get('x-force-refresh') === 'true';
 
     const analysisOptions = { customApiKey, skipCache };
 

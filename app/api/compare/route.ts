@@ -4,11 +4,15 @@ import { CompareRequestSchema } from '@/lib/validation/clauseSchema';
 import { getUserSafeErrorMessage } from '@/lib/validation/userSafeError';
 import { sessionAnalysisCache } from '@/lib/cache/analysisCache';
 import { DocumentDiffResult } from '@/types/compare';
+import { enforceRateLimit } from '@/lib/security/rateLimiter';
 
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   try {
+    const rateLimitRes = enforceRateLimit(req, 60);
+    if (rateLimitRes) return rateLimitRes;
+
     const customApiKey =
       req.headers.get('x-nvidia-api-key') ||
       req.headers.get('x-openrouter-api-key') ||

@@ -1,6 +1,32 @@
 import { ZodError } from 'zod';
 
 /**
+ * Sanitizes and strips sensitive API keys, auth headers, and contract payloads from log statements.
+ * Strictly prevents document content or payload fragments from leaking into server logs even in edge cases.
+ */
+export function sanitizeLogSnippet(raw: string, maxLen = 180): string {
+  if (!raw) return '';
+  return raw
+    // Redact Bearer tokens and header authorization payloads
+    .replace(/Bearer\s+[^\s"';,]+/gi, 'Bearer [REDACTED]')
+    .replace(/x-(?:nvidia|openrouter|anthropic)-api-key['"]?\s*:\s*['"]?[^\s"';,]+['"]?/gi, 'api-key: [REDACTED]')
+    // Redact standalone NVIDIA NIM and OpenRouter API keys
+    .replace(/nvapi-[a-zA-Z0-9_-]+/gi, '[REDACTED_API_KEY]')
+    .replace(/sk-[a-zA-Z0-9_-]+/gi, '[REDACTED_API_KEY]')
+    .replace(/key-[a-zA-Z0-9_-]+/gi, '[REDACTED_API_KEY]')
+    // Redact document payload content and text fields (JSON and key-value forms)
+    .replace(/("(?:rawText|originalText|text|clauseText|content|docAText|docBText|prompt|summary)")\s*:\s*(?:"[^"]*"|'[^']*'|`[^`]*`)/gi, '$1: "[REDACTED_DOCUMENT_TEXT]"')
+    .replace(/((?:rawText|originalText|text|clauseText|content|docAText|docBText)\s*[:=]\s*)[^\s,;}]+/gi, '$1[REDACTED_DOCUMENT_TEXT]')
+    // Redact base64 payloads
+    .replace(/data:[a-zA-Z0-9/+.-]+;base64,[a-zA-Z0-9/+=]{30,}/gi, '[REDACTED_BASE64_PAYLOAD]')
+    // Flatten whitespaces and collapse multiple spaces
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+    .slice(0, maxLen);
+}
+
+/**
  * Ensures error messages returned to end users or UI are plain-language and never
  * expose internal Zod schema validation dumps, stack traces, or internal error objects.
  */
@@ -8,9 +34,13 @@ export function getUserSafeErrorMessage(
   err: unknown,
   fallbackMessage = 'An unexpected error occurred. Please try again.'
 ): string {
-  // Always log raw error server-side for developer debugging
+  // Always log sanitized error server-side for developer debugging without leaking payloads or keys
   if (process.env.NODE_ENV !== 'production') {
-    console.error('[Internal Error Detail]', err);
+    const errorName = err instanceof Error ? err.name : 'UnknownError';
+    const statusProp = (err as any)?.status || (err as any)?.statusCode;
+    const rawMsg = err instanceof Error ? err.message : typeof err === 'string' ? err : 'Unknown';
+    const cleanMsg = sanitizeLogSnippet(rawMsg);
+    console.error(`[Internal Error Detail] ${errorName}${statusProp ? ` (status ${statusProp})` : ''}: ${cleanMsg}`);
   }
 
   if (!err) {
@@ -96,7 +126,8 @@ export function classifyAnalysisError(err: unknown): AnalysisDiagnostic {
     };
   }
 
-  const rawMessage = (err instanceof Error ? err.message : String(err)).replace(/\r?\n/g, ' ').slice(0, 250);
+  const rawMsg = err instanceof Error ? err.message : String(err);
+  const rawMessage = sanitizeLogSnippet(rawMsg, 200);
   const statusProp = (err as any)?.status || (err as any)?.statusCode;
   const statusNum = typeof statusProp === 'number' ? statusProp : undefined;
 

@@ -3,16 +3,31 @@ import { LegalLensDocument } from '@/types/document';
 import { generateDocumentMarkdown } from '@/lib/export/markdown';
 import { generateDocumentPdfBuffer } from '@/lib/export/pdf';
 import { getUserSafeErrorMessage } from '@/lib/validation/userSafeError';
+import { ExportRequestSchema } from '@/lib/validation/clauseSchema';
+import { enforceRateLimit } from '@/lib/security/rateLimiter';
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const format = body.format as 'pdf' | 'markdown';
-    const doc = body.document as LegalLensDocument | undefined;
+    const rateLimitRes = enforceRateLimit(req, 60);
+    if (rateLimitRes) return rateLimitRes;
 
-    if (!doc || !doc.fileName) {
-      return NextResponse.json({ error: 'Valid document object is required.' }, { status: 400 });
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: 'Invalid JSON request payload.' }, { status: 400 });
     }
+
+    const parsed = ExportRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: 'Valid export request with format (pdf|markdown) and document is required.' },
+        { status: 400 }
+      );
+    }
+
+    const { format } = parsed.data;
+    const doc = parsed.data.document as unknown as LegalLensDocument;
 
     const safeBaseName = doc.fileName.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 30);
 

@@ -12,9 +12,13 @@ import { parseRawText } from '@/lib/parsing/text';
 import { splitIntoSections } from '@/lib/chunking/sectionSplitter';
 import { createDocumentChunks } from '@/lib/chunking/tokenChunker';
 import { LegalLensDocument } from '@/types/document';
+import { enforceRateLimit } from '@/lib/security/rateLimiter';
 
 export async function POST(req: NextRequest) {
   try {
+    const rateLimitRes = enforceRateLimit(req, 60);
+    if (rateLimitRes) return rateLimitRes;
+
     const contentType = req.headers.get('content-type') || '';
 
     let fileName = 'pasted-document.txt';

@@ -6,6 +6,7 @@ import { LegalLensDocument } from '@/types/document';
 import { LawyerChecklistItem } from '@/types/clause';
 import { DisclaimerBanner } from '../layout/DisclaimerBanner';
 import { Modal } from '@/components/ui/Modal';
+import { getUserSafeErrorMessage } from '@/lib/validation/userSafeError';
 
 interface LawyerChecklistModalProps {
   isOpen: boolean;
@@ -92,7 +93,8 @@ export function LawyerChecklistModal({
       window.document.body.removeChild(a);
     } catch (err) {
       console.error(err);
-      alert('Failed to generate export file.');
+      const safeMsg = getUserSafeErrorMessage(err, 'Failed to generate export file. Please try again.');
+      alert(safeMsg);
     } finally {
       setDownloadingFormat(null);
     }

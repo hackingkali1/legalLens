@@ -97,3 +97,49 @@ export const CompareRequestSchema = z.object({
 
 export type CompareRequest = z.infer<typeof CompareRequestSchema>;
 
+export const AnalyzeRequestSchema = z.object({
+  step: z.enum(['all', 'summary', 'clauses']).optional().default('all'),
+  skipCache: z.boolean().optional(),
+  forceRefresh: z.boolean().optional(),
+  document: z.object({
+    id: z.string().optional(),
+    fileName: z.string().optional(),
+    fileType: z.string().optional(),
+    uploadedAt: z.string().optional(),
+    rawText: z.string().min(1, 'Valid document structure with text is required.'),
+    sections: z.array(
+      z.object({
+        id: z.string(),
+        title: z.string(),
+        originalText: z.string(),
+      }).passthrough()
+    ).min(1, 'Valid document structure with sections is required.'),
+  }).passthrough(),
+});
+
+export type AnalyzeRequest = z.infer<typeof AnalyzeRequestSchema>;
+
+export const ChatRequestSchema = z.object({
+  question: z.string().min(1, 'Question cannot be empty.').max(2000, 'Question exceeds maximum length.'),
+  chunks: z.array(
+    z.object({
+      text: z.string(),
+    }).passthrough()
+  ).min(1, 'Document chunks are required for Q&A.'),
+  rawText: z.string().optional().default(''),
+  skipCache: z.boolean().optional(),
+  forceRefresh: z.boolean().optional(),
+});
+
+export type ChatRequest = z.infer<typeof ChatRequestSchema>;
+
+export const ExportRequestSchema = z.object({
+  format: z.enum(['pdf', 'markdown']),
+  document: z.object({
+    fileName: z.string().min(1, 'Valid document object is required.'),
+  }).passthrough(),
+});
+
+export type ExportRequest = z.infer<typeof ExportRequestSchema>;
+
+
