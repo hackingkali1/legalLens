@@ -12,7 +12,7 @@ export class RateLimiter {
   private defaultLimit: number;
   private defaultWindowMs: number;
 
-  constructor(defaultLimit = 60, defaultWindowMs = 60_000) {
+  constructor(defaultLimit = 120, defaultWindowMs = 60_000) {
     this.defaultLimit = defaultLimit;
     this.defaultWindowMs = defaultWindowMs;
   }
@@ -97,7 +97,7 @@ export class RateLimiter {
   }
 }
 
-export const apiRateLimiter = new RateLimiter(60, 60_000);
+export const apiRateLimiter = new RateLimiter(120, 60_000);
 
 /**
  * Standardized rate-limit enforcement check for Next.js route handlers.
@@ -105,7 +105,7 @@ export const apiRateLimiter = new RateLimiter(60, 60_000);
  */
 export function enforceRateLimit(
   req: NextRequest,
-  limit = 60,
+  limit = 120,
   windowMs = 60_000
 ): NextResponse | null {
   const result = apiRateLimiter.check(req, limit, windowMs);

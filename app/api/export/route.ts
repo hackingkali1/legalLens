@@ -8,7 +8,7 @@ import { enforceRateLimit } from '@/lib/security/rateLimiter';
 
 export async function POST(req: NextRequest) {
   try {
-    const rateLimitRes = enforceRateLimit(req, 60);
+    const rateLimitRes = enforceRateLimit(req, 120);
     if (rateLimitRes) return rateLimitRes;
 
     let body: unknown;
