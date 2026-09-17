@@ -1,7 +1,21 @@
 import { DocumentSection } from '@/types/document';
 import { splitIntoSections } from './sectionSplitter';
 
-export const TARGET_CLAUSE_CHUNK_CHARS = 3200;
+/**
+ * Documents at or below this character count are sent to the clause-detection
+ * model in a SINGLE chunk with full text (no splitting, no overlap windows).
+ * At ~4 chars/token, 22,000 chars ≈ 5,500 tokens — well within Nemotron-70b's
+ * 128k-token context window, and large enough to cover the vast majority of
+ * contracts uploaded by users (5–15 pages of legal text).
+ */
+export const CLAUSE_SINGLE_PASS_CHARS = 22_000;
+
+/**
+ * For documents exceeding CLAUSE_SINGLE_PASS_CHARS, sections are packed into
+ * chunks up to this size before each LLM call. Keeps individual prompts
+ * focused on coherent clause groups while avoiding model context overflow.
+ */
+export const TARGET_CLAUSE_CHUNK_CHARS = 10_000;
 export const CLAUSE_CHUNK_OVERLAP_CHARS = 350;
 
 export interface ClauseChunk {
@@ -15,9 +29,10 @@ export interface ClauseChunk {
 
 /**
  * Creates coherent semantic chunks for legal clause detection:
- * 1. Prioritizes section/clause headings: packs contiguous sections up to TARGET_CLAUSE_CHUNK_CHARS.
- * 2. If a single section is unusually long (> 3,500 chars), splits that section into overlapping windows.
- * 3. Falls back to fixed-size overlapping chunks for unstructured documents without headings.
+ * 1. Single-pass: documents <= CLAUSE_SINGLE_PASS_CHARS are returned as one chunk.
+ * 2. Structured chunking: packs contiguous sections up to TARGET_CLAUSE_CHUNK_CHARS.
+ * 3. Splits oversized individual sections into overlapping windows.
+ * 4. Falls back to fixed-size overlapping chunks for unstructured documents.
  */
 export function createClauseAnalysisChunks(
   sections: DocumentSection[],
@@ -35,8 +50,9 @@ export function createClauseAnalysisChunks(
     effectiveSections = splitIntoSections(trimmedFullText);
   }
 
-  // If document is short enough to fit entirely in one chunk, return single chunk
-  if (trimmedFullText.length <= TARGET_CLAUSE_CHUNK_CHARS) {
+  // Single-pass path: document fits comfortably in one model call.
+  // This covers nearly all real-world uploaded legal documents (5-15 pages).
+  if (trimmedFullText.length <= CLAUSE_SINGLE_PASS_CHARS) {
     return [
       {
         chunkIndex: 0,
@@ -98,7 +114,7 @@ function chunkStructuredSections(sections: DocumentSection[]): ClauseChunk[] {
     const secText = sec.originalText.trim();
     if (!secText) continue;
 
-    // Case A: Section itself is oversized (> 3,500 chars)
+    // Case A: Section itself is oversized (> TARGET_CLAUSE_CHUNK_CHARS + 300 chars)
     if (secText.length > TARGET_CLAUSE_CHUNK_CHARS + 300) {
       // Flush any accumulated smaller sections first
       emitCurrentChunk();

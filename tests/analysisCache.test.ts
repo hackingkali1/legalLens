@@ -46,7 +46,9 @@ describe('Analysis Session Cache & LLM Call Reduction Pipeline', () => {
     });
   }
 
-  // Sample 2-chunk document data (> 3200 characters to trigger chunking into 2 parts)
+  // Sample single-chunk document data (< CLAUSE_SINGLE_PASS_CHARS = 22,000 chars)
+  // These sections are representative of a typical 5-10 page legal document.
+  // The clause analyzer sends the full document in ONE call (single-pass).
   const sampleSection1: DocumentSection = {
     id: 'sec-1',
     title: 'Section 1: Termination & Renewal',
@@ -72,7 +74,8 @@ describe('Analysis Session Cache & LLM Call Reduction Pipeline', () => {
   const multiSections = [sampleSection1, sampleSection2];
   const multiDocText = `${sampleSection1.originalText}\n\n${sampleSection2.originalText}`;
 
-  const mockChunk1ClauseResponse = {
+  // Combined clause response for single-pass mode (both clauses returned in one call)
+  const mockSinglePassClauseResponse = {
     clauses: [
       {
         category: 'termination',
@@ -84,11 +87,6 @@ describe('Analysis Session Cache & LLM Call Reduction Pipeline', () => {
         quote: 'Either party may terminate upon sixty (60) days prior written notice.',
         questionForLawyer: 'Can notice period be reduced to 30 days?',
       },
-    ],
-  };
-
-  const mockChunk2ClauseResponse = {
-    clauses: [
       {
         category: 'indemnity',
         attentionLevel: 'high',
@@ -138,6 +136,15 @@ describe('Analysis Session Cache & LLM Call Reduction Pipeline', () => {
       expect(hash1).toBe(hash3);
     });
 
+    it('stores and retrieves typed values with correct cache semantics', () => {
+      const testData = { clauses: [{ id: 'c1', title: 'Test Clause' }] };
+      sessionAnalysisCache.set('test-typed-key', testData);
+
+      const retrieved = sessionAnalysisCache.get<typeof testData>('test-typed-key');
+      expect(retrieved).toEqual(testData);
+      expect(retrieved?.clauses[0].title).toBe('Test Clause');
+    });
+
     it('manages LRU eviction when capacity is exceeded', () => {
       const smallCache = new AnalysisSessionCache(2);
       smallCache.set('key1', 'value1');
@@ -173,15 +180,16 @@ describe('Analysis Session Cache & LLM Call Reduction Pipeline', () => {
   // 2. Full Document Clause Analysis Caching (Requirement 1 & 5)
   // =========================================================================
   describe('Document-Level Clause Analysis Caching', () => {
-    it('executes LLM calls on first analysis and serves directly from cache on second analysis (0 new LLM calls)', async () => {
-      const fetchMock = mockNvidiaResponses([mockChunk1ClauseResponse, mockChunk2ClauseResponse]);
+    it('executes 1 LLM call (single-pass) on first analysis and serves from cache on second analysis (0 new LLM calls)', async () => {
+      // Documents under CLAUSE_SINGLE_PASS_CHARS (22,000 chars) are analyzed in 1 call.
+      const fetchMock = mockNvidiaResponses([mockSinglePassClauseResponse]);
       global.fetch = fetchMock;
 
       // First analysis of document
       const firstResult = await detectAndClassifyClauses(multiDocText, multiSections);
       expect(firstResult.clauses).toHaveLength(2);
-      // Since document spans 2 chunks, exactly 2 LLM calls should have been made
-      expect(fetchMock).toHaveBeenCalledTimes(2);
+      // Single-pass: exactly 1 LLM call for the full document
+      expect(fetchMock).toHaveBeenCalledTimes(1);
 
       // Second analysis of same document (e.g. user re-opens doc or navigates between tabs)
       const secondResult = await detectAndClassifyClauses(multiDocText, multiSections);
@@ -192,8 +200,8 @@ describe('Analysis Session Cache & LLM Call Reduction Pipeline', () => {
       expect(secondResult.clauses[1].title).toBe(firstResult.clauses[1].title);
       expect(secondResult.lawyerChecklist).toHaveLength(2);
 
-      // CRITICAL: Call count MUST remain exactly 2 (zero new LLM calls made on repeated analysis)
-      expect(fetchMock).toHaveBeenCalledTimes(2);
+      // CRITICAL: Call count MUST remain exactly 1 (zero new LLM calls made on repeated analysis)
+      expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(sessionAnalysisCache.getStats().hits).toBeGreaterThanOrEqual(1);
     });
   });
@@ -202,83 +210,46 @@ describe('Analysis Session Cache & LLM Call Reduction Pipeline', () => {
   // 3. Per-Chunk Caching & Partial Failure Retry (Requirement 4 & 5)
   // =========================================================================
   describe('Per-Chunk Caching & Partial Chunk Failure Retry', () => {
-    it('when one chunk fails, retrying only re-calls the failed chunk, not both', async () => {
-      let chunk1CallCount = 0;
-      let chunk2CallCount = 0;
+    it('when analysis fails, retrying executes fresh LLM calls (single-pass cannot partially cache)', async () => {
+      // In single-pass mode the entire document is one atomic call.
+      // On failure the whole call is retried. On success, the full result is cached.
+      let callCount = 0;
+      let shouldFail = true;
 
-      // Custom mock fetch that simulates Chunk 1 succeeding and Chunk 2 failing on first attempt
-      let chunk2ShouldFail = true;
-
-      const fetchMock = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
-        const bodyStr = String(init.body || '').toLowerCase();
-        const isChunk1 = bodyStr.includes('section 1: termination') || bodyStr.includes('termination & renewal');
-        const isChunk2 = bodyStr.includes('section 2: indemnification') || bodyStr.includes('indemnification & liability');
-
-        if (isChunk1) {
-          chunk1CallCount++;
+      const fetchMock = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (shouldFail) {
           return Promise.resolve({
-            ok: true,
-            status: 200,
-            json: async () => ({
-              choices: [{ message: { content: JSON.stringify(mockChunk1ClauseResponse) } }],
-            }),
+            ok: false,
+            status: 401,
+            text: async () => 'Unauthorized',
+            json: async () => ({ error: { message: 'Unauthorized' } }),
           });
         }
-
-        if (isChunk2) {
-          chunk2CallCount++;
-          if (chunk2ShouldFail) {
-            // Return 401 to fail fast without triggering the cascade of fallback models
-            return Promise.resolve({
-              ok: false,
-              status: 401,
-              text: async () => 'Rate limit exceeded',
-              json: async () => ({ error: { message: 'Rate limit exceeded' } }),
-            });
-          } else {
-            return Promise.resolve({
-              ok: true,
-              status: 200,
-              json: async () => ({
-                choices: [{ message: { content: JSON.stringify(mockChunk2ClauseResponse) } }],
-              }),
-            });
-          }
-        }
-
-        return Promise.reject(new Error(`Unknown chunk payload: ${bodyStr.slice(0, 100)}`));
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            choices: [{ message: { content: JSON.stringify(mockSinglePassClauseResponse) } }],
+          }),
+        });
       });
 
       global.fetch = fetchMock;
 
-      // Step 1: Initial analysis attempt where Chunk 2 fails
+      // Step 1: Initial analysis attempt fails
       await expect(detectAndClassifyClauses(multiDocText, multiSections)).rejects.toThrow();
+      expect(callCount).toBe(1);
 
-      // Chunk 1 succeeded and was cached; Chunk 2 failed once
-      expect(chunk1CallCount).toBe(1);
-      expect(chunk2CallCount).toBe(1);
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-
-      // Step 2: User clicks "Retry Analysis" or automatic retry triggered
-      // Now Chunk 2 will succeed
-      chunk2ShouldFail = false;
-
+      // Step 2: Retry - now it succeeds
+      shouldFail = false;
       const retryResult = await detectAndClassifyClauses(multiDocText, multiSections);
-
-      // Verify that retry succeeded with all clauses
       expect(retryResult.clauses).toHaveLength(2);
+      expect(callCount).toBe(2);
 
-      // CRITICAL VERIFICATION:
-      // Chunk 1 was served from per-chunk cache: its call count did NOT increase!
-      expect(chunk1CallCount).toBe(1);
-      // Chunk 2 (the failed one) was re-called: its call count increased by exactly 1
-      expect(chunk2CallCount).toBe(2);
-      // Total fetch calls across both attempts is 3 (1 for chunk1 + 2 for chunk2), NOT 4!
-      expect(fetchMock).toHaveBeenCalledTimes(3);
-
-      // Step 3: A subsequent 3rd analysis should now hit the full document cache (0 calls)
+      // Step 3: Third call hits the cache (0 new LLM calls)
       await detectAndClassifyClauses(multiDocText, multiSections);
-      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(callCount).toBe(2);
     });
   });
 
@@ -367,26 +338,25 @@ describe('Analysis Session Cache & LLM Call Reduction Pipeline', () => {
   // =========================================================================
   describe('Cache-Busting Path (skipCache)', () => {
     it('bypasses cache and executes fresh LLM calls when skipCache is true', async () => {
+      // Single-pass: each detectAndClassifyClauses call = 1 LLM call
       const fetchMock = mockNvidiaResponses([
-        mockChunk1ClauseResponse,
-        mockChunk2ClauseResponse,
-        mockChunk1ClauseResponse,
-        mockChunk2ClauseResponse,
+        mockSinglePassClauseResponse,
+        mockSinglePassClauseResponse,
       ]);
       global.fetch = fetchMock;
 
-      // First call (populates cache with 2 calls)
+      // First call (populates cache with 1 call — single-pass)
       await detectAndClassifyClauses(multiDocText, multiSections);
-      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
 
-      // Normal second call uses cache (still 2 calls)
+      // Normal second call uses cache (still 1 call)
       await detectAndClassifyClauses(multiDocText, multiSections);
-      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
 
-      // Explicit re-analysis with skipCache: true forces fresh LLM calls
+      // Explicit re-analysis with skipCache: true forces fresh LLM call
       await detectAndClassifyClauses(multiDocText, multiSections, { skipCache: true });
-      // Call count increases by 2 -> 4 calls total
-      expect(fetchMock).toHaveBeenCalledTimes(4);
+      // Call count increases by 1 -> 2 calls total
+      expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
     it('bypasses summary cache when skipCache is true', async () => {
@@ -421,14 +391,13 @@ describe('Analysis Session Cache & LLM Call Reduction Pipeline', () => {
     };
 
     it('serves repeated /api/analyze requests from cache with 0 additional LLM calls', async () => {
+      // Single-pass: 1 summary call + 1 clause call = 2 LLM calls total per fresh analysis
       const fetchMock = mockNvidiaResponses([
         mockSummaryResponse,
-        mockChunk1ClauseResponse,
-        mockChunk2ClauseResponse,
+        mockSinglePassClauseResponse,
         // Responses for skipCache test
         mockSummaryResponse,
-        mockChunk1ClauseResponse,
-        mockChunk2ClauseResponse,
+        mockSinglePassClauseResponse,
       ]);
       global.fetch = fetchMock;
 
@@ -444,8 +413,8 @@ describe('Analysis Session Cache & LLM Call Reduction Pipeline', () => {
       expect(res1.status).toBe(200);
       expect(data1.summary).toBeDefined();
       expect(data1.clauses).toHaveLength(2);
-      // 1 summary call + 2 clause chunk calls = 3 LLM calls
-      expect(fetchMock).toHaveBeenCalledTimes(3);
+      // 1 summary call + 1 clause call (single-pass) = 2 LLM calls
+      expect(fetchMock).toHaveBeenCalledTimes(2);
 
       // 2. Second API request with identical document: served entirely from cache
       const req2 = new NextRequest('http://localhost:3000/api/analyze', {
@@ -459,8 +428,8 @@ describe('Analysis Session Cache & LLM Call Reduction Pipeline', () => {
       expect(res2.status).toBe(200);
       expect(data2.summary.documentType).toBe(data1.summary.documentType);
       expect(data2.clauses).toHaveLength(2);
-      // CALL COUNT REMAINS EXACTLY 3 (0 NEW CALLS!)
-      expect(fetchMock).toHaveBeenCalledTimes(3);
+      // CALL COUNT REMAINS EXACTLY 2 (0 NEW CALLS!)
+      expect(fetchMock).toHaveBeenCalledTimes(2);
 
       // 3. Third API request with skipCache: true forces fresh LLM calls
       const req3 = new NextRequest('http://localhost:3000/api/analyze', {
@@ -470,8 +439,8 @@ describe('Analysis Session Cache & LLM Call Reduction Pipeline', () => {
       });
       const res3 = await analyzeRouteHandler(req3);
       expect(res3.status).toBe(200);
-      // 3 new calls executed -> total 6 calls
-      expect(fetchMock).toHaveBeenCalledTimes(6);
+      // 2 new calls executed -> total 4 calls
+      expect(fetchMock).toHaveBeenCalledTimes(4);
     });
   });
 
@@ -505,44 +474,37 @@ describe('Analysis Session Cache & LLM Call Reduction Pipeline', () => {
             }) } }] }),
           });
         }
-        if (bodyStr.includes('section 1: termination') || bodyStr.includes('termination & renewal')) {
-          return Promise.resolve({
-            ok: true,
-            status: 200,
-            json: async () => ({ choices: [{ message: { content: JSON.stringify(mockChunk1ClauseResponse) } }] }),
-          });
-        }
+        // Single-pass clause analysis: whole document in one call
         return Promise.resolve({
           ok: true,
           status: 200,
-          json: async () => ({ choices: [{ message: { content: JSON.stringify(mockChunk2ClauseResponse) } }] }),
+          json: async () => ({ choices: [{ message: { content: JSON.stringify(mockSinglePassClauseResponse) } }] }),
         });
       });
 
       global.fetch = fetchMock;
 
-      // Event 1: Initial upload & analyze (Summary + 2 Clause chunks)
+      // Event 1: Initial upload & analyze (1 summary call + 1 clause call — single-pass)
       await generateDocumentSummary(multiSections);
       await detectAndClassifyClauses(multiDocText, multiSections);
-      // Initial calls: 1 summary + 2 clause chunks = 3 calls
-      expect(actualCallsWithCache).toBe(3);
+      // Initial calls: 1 summary + 1 clause = 2 calls
+      expect(actualCallsWithCache).toBe(2);
 
       // Event 2: User views summary, then switches to "Clause Attention Flags" tab
-      // (Re-verifying clauses in session)
       await detectAndClassifyClauses(multiDocText, multiSections);
       // Cache HIT: 0 new calls
-      expect(actualCallsWithCache).toBe(3);
+      expect(actualCallsWithCache).toBe(2);
 
       // Event 3: User switches to Document Viewer, then comes back to Plain Summary
       await generateDocumentSummary(multiSections);
       // Cache HIT: 0 new calls
-      expect(actualCallsWithCache).toBe(3);
+      expect(actualCallsWithCache).toBe(2);
 
       // Event 4: Re-opening the same document later in the session
       await generateDocumentSummary(multiSections);
       await detectAndClassifyClauses(multiDocText, multiSections);
       // Cache HIT: 0 new calls
-      expect(actualCallsWithCache).toBe(3);
+      expect(actualCallsWithCache).toBe(2);
 
       // Event 5: User asks QA question on the document
       const sampleChunks: DocumentChunk[] = [{
@@ -560,20 +522,19 @@ describe('Analysis Session Cache & LLM Call Reduction Pipeline', () => {
       await answerDocumentQuestion('Notice period?', sampleChunks, multiDocText);
       // Cache HIT: 0 new QA calls
 
-      // Call count with cache: 3 (initial) + 1 (QA) = 4 calls
-      expect(actualCallsWithCache).toBe(4);
+      // Call count with cache: 2 (initial) + 1 (QA) = 3 calls
+      expect(actualCallsWithCache).toBe(3);
 
       // COMPARISON CALCULATION:
       // Without cache:
-      // Event 1 (Upload): 1 summary + 2 clause chunks = 3 calls
-      // Event 2 (Switch tabs): 2 clause calls = 2 calls
+      // Event 1 (Upload): 1 summary + 1 clause = 2 calls
+      // Event 2 (Switch tabs): 1 clause call = 1 call
       // Event 3 (Come back to summary): 1 summary call = 1 call
-      // Event 4 (Re-open document): 1 summary + 2 clause calls = 3 calls
+      // Event 4 (Re-open document): 1 summary + 1 clause = 2 calls
       // Event 5 (QA ask + revisit): 2 QA calls = 2 calls
-      // Total WITHOUT Cache: 3 + 2 + 1 + 3 + 2 = 11 calls!
-      // Total WITH Cache: 4 calls!
-      // Net Reduction: 7 calls saved (63.6% reduction in NVIDIA NIM calls).
+      // Total WITHOUT Cache: 2 + 1 + 1 + 2 + 2 = 8 calls!
+      // Total WITH Cache: 3 calls!
+      // Net Reduction: 5 calls saved (62.5% reduction in NVIDIA NIM calls).
     });
   });
 });
-

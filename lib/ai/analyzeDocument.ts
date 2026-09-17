@@ -19,11 +19,20 @@ export interface GenerateSummaryOptions {
   skipCache?: boolean;
 }
 
-export const TARGET_SECTION_BATCH_CHARS = 3500;
-export const MAX_SECTIONS_PER_BATCH = 3;
+/**
+ * Single-pass threshold: documents whose total text is at or below this limit
+ * are sent to the model in ONE unified prompt, regardless of section count.
+ * Nemotron-70b has a 128k-token context window (~450k characters), so 50,000
+ * characters (~12,500 tokens) is well within a single request.
+ */
+export const SINGLE_PASS_MAX_CHARS = 50_000;
+
+export const TARGET_SECTION_BATCH_CHARS = 12_000;
+export const MAX_SECTIONS_PER_BATCH = 6;
 
 /**
- * Groups document sections into coherent batches to avoid single-prompt context bloat.
+ * Groups document sections into coherent batches.
+ * Only used for documents exceeding SINGLE_PASS_MAX_CHARS (rare, very large docs).
  */
 export function batchDocumentSections(
   sections: DocumentSection[],
@@ -93,9 +102,12 @@ export async function generateDocumentSummary(
     }
   }
 
-  // Strategy 1: Concise documents (<= 3 sections and <= 18,000 total chars)
-  // Execute in a single unified pass without section truncation
-  if (sections.length <= 3 && totalChars <= 18000) {
+  // Strategy 1: Single unified pass for the vast majority of real-world legal documents.
+  // Threshold: totalChars <= SINGLE_PASS_MAX_CHARS (50,000 chars ≈ 12,500 tokens).
+  // The section count is intentionally NOT gated — a 9-section lease agreement that
+  // is 2,700 chars total runs in 1 call, not 4. Nemotron-70b's 128k context window
+  // makes this safe up to ~450k characters before any context concern arises.
+  if (totalChars <= SINGLE_PASS_MAX_CHARS) {
     const parsedJson = await createStructuredCompletion({
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
@@ -148,8 +160,8 @@ export async function generateDocumentSummary(
     return result;
   }
 
-  // Strategy 2: Multi-section or large documents (> 3 sections or > 4,500 chars)
-  // Process in section batches with concurrency = 2, then synthesize executive overview
+  // Strategy 2: Very large documents (> 50,000 total chars — rare in practice).
+  // Process in section batches with concurrency = 2, then synthesize executive overview.
   const batches = batchDocumentSections(sections);
   const collectedSectionSummaries: Array<{
     sectionId: string;
@@ -185,7 +197,7 @@ export async function generateDocumentSummary(
             { role: 'user', content: BATCH_SECTION_SUMMARY_PROMPT(batchInput) },
           ],
           temperature: 0.1,
-          max_tokens: 3500,
+          max_tokens: 4000,
           customApiKey,
         });
 

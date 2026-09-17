@@ -94,17 +94,21 @@ describe('AI Pipeline Core Logic & Resilience Tests', () => {
     });
 
     it('prompt construction: chunks documents exceeding target chunk size into multiple chunk requests', async () => {
-      // Create multi-section document exceeding 3200 characters
+      // Create multi-section document exceeding CLAUSE_SINGLE_PASS_CHARS (22,000 chars)
+      // to exercise the structured chunking path. 4 sections × ~6,000 chars each = ~24,000 chars.
       const largeSections: DocumentSection[] = Array.from({ length: 4 }, (_, i) => ({
         id: `sec-${i + 1}`,
         title: `Article ${i + 1}: General Terms`,
-        originalText: `This is substantive legal text for section ${i + 1}. `.repeat(40), // ~2160 chars each
+        originalText: `This is substantive legal text for section ${i + 1}. `.repeat(120), // ~6,480 chars each
         plainLanguageSummary: '',
         keyPoints: [],
-        startIndex: i * 2200,
-        endIndex: (i + 1) * 2200,
+        startIndex: i * 6600,
+        endIndex: (i + 1) * 6600,
       }));
       const fullLargeText = largeSections.map((s) => s.originalText).join('\n\n');
+
+      // Verify we are actually above the single-pass threshold
+      expect(fullLargeText.length).toBeGreaterThan(22000);
 
       const fetchMock = mockNvidiaCompletion({ clauses: [] });
       global.fetch = fetchMock;
@@ -119,7 +123,7 @@ describe('AI Pipeline Core Logic & Resilience Tests', () => {
         const payload = JSON.parse(call[1].body as string);
         const userMessage = payload.messages.find((m: any) => m.role === 'user')?.content;
         expect(userMessage).toContain('Analyze the provided legal document and extract all important clauses');
-        expect(userMessage.length).toBeLessThan(30000);
+        expect(userMessage.length).toBeLessThan(60000);
       }
     });
 
@@ -385,6 +389,7 @@ describe('AI Pipeline Core Logic & Resilience Tests', () => {
         endIndex: (i + 1) * 50,
       }));
 
+      // With maxCount=2 override: 5 sections -> batches of [2, 2, 1]
       const batches = batchDocumentSections(fiveSections, 3500, 2);
       expect(batches).toHaveLength(3); // 2 + 2 + 1
       expect(batches[0]).toHaveLength(2);
@@ -392,7 +397,8 @@ describe('AI Pipeline Core Logic & Resilience Tests', () => {
       expect(batches[2]).toHaveLength(1);
     });
 
-    it('multi-section batching: processes >3 sections in batches and synthesizes overview without truncation', async () => {
+    it('single-pass: documents under SINGLE_PASS_MAX_CHARS (50k chars) run in exactly 1 LLM call regardless of section count', async () => {
+      // 4 sections, each ~50 chars total, well under 50,000-char threshold -> single-pass
       const multiSections: DocumentSection[] = Array.from({ length: 4 }, (_, i) => ({
         id: `sec-${i + 1}`,
         title: `Section ${i + 1}`,
@@ -403,53 +409,35 @@ describe('AI Pipeline Core Logic & Resilience Tests', () => {
         endIndex: (i + 1) * 100,
       }));
 
-      // Mock sequence: Batch 1 (secs 1-3), Batch 2 (sec 4), Synthesis Overview
-      const mockBatch1 = {
+      const mockSinglePassResponse = {
+        overview: 'Synthesized contract summary from all 4 sections in one pass.',
+        documentType: 'Commercial Contract',
+        mainParties: ['Party A', 'Party B'],
+        effectiveDateOrTerm: '12 months',
+        keyTakeaways: ['Key takeaway from single-pass analysis'],
         sectionSummaries: [
           { sectionId: 'sec-1', plainLanguageSummary: 'Summary 1', keyPoints: ['Pt 1'] },
           { sectionId: 'sec-2', plainLanguageSummary: 'Summary 2', keyPoints: ['Pt 2'] },
           { sectionId: 'sec-3', plainLanguageSummary: 'Summary 3', keyPoints: ['Pt 3'] },
-        ],
-      };
-      const mockBatch2 = {
-        sectionSummaries: [
           { sectionId: 'sec-4', plainLanguageSummary: 'Summary 4', keyPoints: ['Pt 4'] },
         ],
-      };
-      const mockSynth = {
-        overview: 'Synthesized overall contract summary from all 4 sections.',
-        documentType: 'Commercial Contract',
-        mainParties: ['Party A', 'Party B'],
-        effectiveDateOrTerm: '12 months',
-        keyTakeaways: ['Key takeaway from batched analysis'],
         disclaimer: LEGAL_DISCLAIMER,
       };
 
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValueOnce({
-          ok: true,
-          status: 200,
-          json: async () => ({ choices: [{ message: { content: JSON.stringify(mockBatch1) } }] }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          status: 200,
-          json: async () => ({ choices: [{ message: { content: JSON.stringify(mockBatch2) } }] }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          status: 200,
-          json: async () => ({ choices: [{ message: { content: JSON.stringify(mockSynth) } }] }),
-        });
+      const fetchMock = vi.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ choices: [{ message: { content: JSON.stringify(mockSinglePassResponse) } }] }),
+      });
 
       global.fetch = fetchMock;
 
       const { summary, updatedSections } = await generateDocumentSummary(multiSections);
 
-      expect(fetchMock).toHaveBeenCalledTimes(3);
+      // Exactly 1 LLM call — no batching, no synthesis round-trip
+      expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(summary.documentType).toBe('Commercial Contract');
-      expect(summary.overview).toContain('Synthesized overall contract summary');
+      expect(summary.overview).toContain('4 sections in one pass');
       expect(updatedSections).toHaveLength(4);
       expect(updatedSections[0].plainLanguageSummary).toBe('Summary 1');
       expect(updatedSections[3].plainLanguageSummary).toBe('Summary 4');
