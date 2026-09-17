@@ -1,15 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import {
-  ApiKeyModal,
-  getSessionApiKey,
-  SESSION_KEY_STORAGE,
-} from '@/components/settings/ApiKeyModal';
+import { render, screen, waitFor } from '@testing-library/react';
 import { DocumentWorkspace } from '@/components/document/DocumentWorkspace';
+import { Navbar } from '@/components/layout/Navbar';
 import { LegalLensDocument } from '@/types/document';
 
-describe('Flow 1: Session API Key Storage & Header Propagation', () => {
+describe('Flow 1: Server-Side API Key Architecture & Client Cleanliness', () => {
   let originalFetch: typeof global.fetch;
 
   beforeEach(() => {
@@ -26,38 +22,20 @@ describe('Flow 1: Session API Key Storage & Header Propagation', () => {
     vi.restoreAllMocks();
   });
 
-  it('entering an OpenRouter/NVIDIA key stores it in sessionStorage', async () => {
-    const onKeySaved = vi.fn();
-    const onClose = vi.fn();
+  it('Navbar renders with connected status badge and has zero API key input buttons or modals', () => {
+    render(<Navbar />);
 
-    render(<ApiKeyModal isOpen={true} onClose={onClose} onKeySaved={onKeySaved} />);
+    // Verify connected status is rendered
+    expect(screen.getByText(/NVIDIA NIM:/i)).toBeDefined();
+    expect(screen.getByText(/Connected/i)).toBeDefined();
 
-    const input = screen.getByPlaceholderText('nvapi-...');
-    fireEvent.change(input, { target: { value: 'nvapi-test-secret-key-123456789' } });
-
-    const saveBtn = screen.getByRole('button', { name: /save key/i });
-    fireEvent.click(saveBtn);
-
-    // 1. Assert: Key is correctly saved in sessionStorage
-    expect(sessionStorage.getItem(SESSION_KEY_STORAGE)).toBe(
-      'nvapi-test-secret-key-123456789'
-    );
-    expect(getSessionApiKey()).toBe('nvapi-test-secret-key-123456789');
-
-    // 2. Assert: Callback fired after save animation
-    await waitFor(
-      () => {
-        expect(onClose).toHaveBeenCalled();
-        expect(onKeySaved).toHaveBeenCalled();
-      },
-      { timeout: 1500 }
-    );
+    // Verify zero user API key input fields or prompts
+    expect(screen.queryByPlaceholderText(/nvapi-\.\.\./i)).toBeNull();
+    expect(screen.queryByRole('button', { name: /save key/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /open api key settings/i })).toBeNull();
   });
 
-  it('correctly attaches x-nvidia-api-key and x-openrouter-api-key headers on subsequent /api/analyze requests', async () => {
-    // Store key in session
-    sessionStorage.setItem(SESSION_KEY_STORAGE, 'nvapi-authorized-token-9999');
-
+  it('verifies /api/analyze requests rely solely on server environment and never inject client x-nvidia-api-key headers', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -67,9 +45,31 @@ describe('Flow 1: Session API Key Storage & Header Propagation', () => {
         fileType: 'txt',
         uploadedAt: new Date().toISOString(),
         rawText: 'Contract terms and conditions',
-        sections: [{ id: 'sec-1', title: 'Terms', originalText: 'Terms', plainLanguageSummary: '', keyPoints: [], startIndex: 0, endIndex: 5 }],
+        sections: [
+          {
+            id: 'sec-1',
+            title: 'Terms',
+            originalText: 'Terms',
+            plainLanguageSummary: '',
+            keyPoints: [],
+            startIndex: 0,
+            endIndex: 5,
+          },
+        ],
         chunks: [],
-        clauses: [{ id: 'c-1', category: 'liability', attentionLevel: 'medium', title: 'Cap', reason: 'r', plainLanguageExplanation: 'e', sourceSection: 'Terms', quote: 'Terms', questionForLawyer: 'q' }],
+        clauses: [
+          {
+            id: 'c-1',
+            category: 'liability',
+            attentionLevel: 'medium',
+            title: 'Cap',
+            reason: 'r',
+            plainLanguageExplanation: 'e',
+            sourceSection: 'Terms',
+            quote: 'Terms',
+            questionForLawyer: 'q',
+          },
+        ],
         summary: { documentType: 'Agreement', overview: 'Summary text', keyTakeaways: [] },
         lawyerChecklist: [],
       }),
@@ -83,7 +83,17 @@ describe('Flow 1: Session API Key Storage & Header Propagation', () => {
       fileType: 'txt',
       uploadedAt: new Date().toISOString(),
       rawText: 'Contract terms and conditions',
-      sections: [{ id: 'sec-1', title: 'Terms', originalText: 'Terms', plainLanguageSummary: '', keyPoints: [], startIndex: 0, endIndex: 5 }],
+      sections: [
+        {
+          id: 'sec-1',
+          title: 'Terms',
+          originalText: 'Terms',
+          plainLanguageSummary: '',
+          keyPoints: [],
+          startIndex: 0,
+          endIndex: 5,
+        },
+      ],
       chunks: [],
       clauses: [],
       summary: undefined,
@@ -100,72 +110,16 @@ describe('Flow 1: Session API Key Storage & Header Propagation', () => {
     expect(url).toBe('/api/analyze');
     expect(options.headers).toBeDefined();
 
-    // Verify key propagation into headers
-    expect(options.headers['x-nvidia-api-key']).toBe('nvapi-authorized-token-9999');
-    expect(options.headers['x-openrouter-api-key']).toBe('nvapi-authorized-token-9999');
+    // Verify zero client-side key header injection
+    expect(options.headers['x-nvidia-api-key']).toBeUndefined();
+    expect(options.headers['x-openrouter-api-key']).toBeUndefined();
   });
 
-  it('is scoped per-session and cleared on session end or explicit removal', () => {
-    sessionStorage.setItem(SESSION_KEY_STORAGE, 'nvapi-temporary-session-key');
-    expect(getSessionApiKey()).toBe('nvapi-temporary-session-key');
-
-    const onClose = vi.fn();
-    const { unmount } = render(<ApiKeyModal isOpen={true} onClose={onClose} />);
-
-    // Click "Clear saved session key"
-    const clearBtn = screen.getByRole('button', { name: /clear saved session key/i });
-    fireEvent.click(clearBtn);
-
-    // Verify cleared from sessionStorage
-    expect(sessionStorage.getItem(SESSION_KEY_STORAGE)).toBeNull();
-    expect(getSessionApiKey()).toBeUndefined();
-
-    unmount();
-  });
-
-  it('SECURITY: confirms the key is NEVER written to persistent storage (localStorage, cookies) and NEVER logged', () => {
-    // Spies on all console logging channels
-    const logSpy = vi.spyOn(console, 'log');
-    const infoSpy = vi.spyOn(console, 'info');
-    const warnSpy = vi.spyOn(console, 'warn');
-    const errorSpy = vi.spyOn(console, 'error');
-
-    const SECRET_KEY = 'nvapi-ultra-confidential-token-do-not-leak';
-
-    render(<ApiKeyModal isOpen={true} onClose={vi.fn()} />);
-
-    const input = screen.getByPlaceholderText('nvapi-...');
-    fireEvent.change(input, { target: { value: SECRET_KEY } });
-
-    const saveBtn = screen.getByRole('button', { name: /save key/i });
-    fireEvent.click(saveBtn);
-
-    // 1. MUST exist in sessionStorage
-    expect(sessionStorage.getItem(SESSION_KEY_STORAGE)).toBe(SECRET_KEY);
-
-    // 2. MUST NEVER exist in localStorage
-    expect(localStorage.getItem(SESSION_KEY_STORAGE)).toBeNull();
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key) {
-        expect(localStorage.getItem(key)).not.toContain(SECRET_KEY);
-      }
-    }
-
-    // 3. MUST NEVER exist in document.cookie
-    expect(document.cookie).not.toContain(SECRET_KEY);
-
-    // 4. MUST NEVER appear in any console/stdout logging output
-    const allLoggedArgs = [
-      ...logSpy.mock.calls.flat(),
-      ...infoSpy.mock.calls.flat(),
-      ...warnSpy.mock.calls.flat(),
-      ...errorSpy.mock.calls.flat(),
-    ];
-
-    for (const loggedItem of allLoggedArgs) {
-      const stringified = typeof loggedItem === 'object' ? JSON.stringify(loggedItem) : String(loggedItem);
-      expect(stringified).not.toContain(SECRET_KEY);
-    }
+  it('SECURITY: confirms zero client-side key persistence in sessionStorage, localStorage, or cookies', () => {
+    // Assert storage is completely free of any api key keys or values
+    expect(sessionStorage.getItem('legallens_nvidia_api_key')).toBeNull();
+    expect(sessionStorage.getItem('legallens_openrouter_api_key')).toBeNull();
+    expect(localStorage.getItem('legallens_nvidia_api_key')).toBeNull();
+    expect(document.cookie).toBe('');
   });
 });

@@ -1,10 +1,8 @@
 import { LegalLensDocument } from '@/types/document';
-import { getSessionApiKey } from '@/components/settings/ApiKeyModal';
 
 export interface AnalyzeDocumentApiOptions {
   step?: 'all' | 'summary' | 'clauses';
   skipCache?: boolean;
-  customApiKey?: string;
 }
 
 export interface AnalyzeDocumentApiResponse extends LegalLensDocument {
@@ -16,27 +14,19 @@ export interface AnalyzeDocumentApiResponse extends LegalLensDocument {
 
 /**
  * Client service function to execute document analysis requests against /api/analyze.
- * Encapsulates session key headers, cache-busting flags, and error extraction.
+ * Relies exclusively on server-side NVIDIA_API_KEY environment variable.
  */
 export async function analyzeDocumentApi(
   document: LegalLensDocument,
   options: AnalyzeDocumentApiOptions = {}
 ): Promise<AnalyzeDocumentApiResponse> {
-  const { step = 'all', skipCache = false, customApiKey } = options;
-
-  const sessionKey = customApiKey || getSessionApiKey();
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-
-  if (sessionKey) {
-    headers['x-nvidia-api-key'] = sessionKey;
-    headers['x-openrouter-api-key'] = sessionKey;
-  }
+  const { step = 'all', skipCache = false } = options;
 
   const res = await fetch('/api/analyze', {
     method: 'POST',
-    headers,
+    headers: {
+      'Content-Type': 'application/json',
+    },
     body: JSON.stringify({ document, step, skipCache }),
   });
 

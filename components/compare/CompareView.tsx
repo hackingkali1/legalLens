@@ -3,7 +3,6 @@
 import React, { useState } from 'react';
 import { GitCompare, ArrowRight, AlertOctagon, AlertTriangle, CheckCircle, Plus, Minus, RefreshCw, Loader2, Sparkles, FileText } from 'lucide-react';
 import { DocumentDiffResult, MaterialChange } from '@/types/compare';
-import { getSessionApiKey } from '../settings/ApiKeyModal';
 import { SAMPLE_NDA_V1_TEXT, SAMPLE_NDA_V2_TEXT } from '@/lib/fixtures/samples';
 import { DisclaimerBanner } from '../layout/DisclaimerBanner';
 import { getUserSafeErrorMessage } from '@/lib/validation/userSafeError';
@@ -29,18 +28,11 @@ export function CompareView() {
     setError(null);
 
     try {
-      const customApiKey = getSessionApiKey();
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      };
-      if (customApiKey) {
-        headers['x-nvidia-api-key'] = customApiKey;
-        headers['x-openrouter-api-key'] = customApiKey;
-      }
-
       const res = await fetch('/api/compare', {
         method: 'POST',
-        headers,
+        headers: {
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
           docAName: docAName.trim() || 'Document A',
           docAText,

@@ -12,12 +12,6 @@ export async function POST(req: NextRequest) {
     const rateLimitRes = enforceRateLimit(req, 120);
     if (rateLimitRes) return rateLimitRes;
 
-    const customApiKey =
-      req.headers.get('x-nvidia-api-key') ||
-      req.headers.get('x-openrouter-api-key') ||
-      req.headers.get('x-anthropic-api-key') ||
-      undefined;
-
     let body: unknown;
     try {
       body = await req.json();
@@ -43,7 +37,7 @@ export async function POST(req: NextRequest) {
       question.trim(),
       chunks as unknown as DocumentChunk[],
       rawText || '',
-      { customApiKey, skipCache }
+      { skipCache }
     );
 
     return NextResponse.json(chatResponse);

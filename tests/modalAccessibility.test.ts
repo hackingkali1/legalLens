@@ -79,13 +79,9 @@ describe('Modal Accessibility & Zero Document Content Logging', () => {
       expect(modalModule.useModalFocusTrap).toBeDefined();
     });
 
-    it('confirms all three modals utilize the shared Modal wrapper and declare role="dialog" and aria-modal="true"', () => {
+    it('confirms all application modals utilize the shared Modal wrapper and declare role="dialog" and aria-modal="true"', () => {
       const uploadAreaCode = fs.readFileSync(
         path.resolve(process.cwd(), 'components/upload/DocumentUploadArea.tsx'),
-        'utf8'
-      );
-      const apiKeyModalCode = fs.readFileSync(
-        path.resolve(process.cwd(), 'components/settings/ApiKeyModal.tsx'),
         'utf8'
       );
       const checklistModalCode = fs.readFileSync(
@@ -93,9 +89,8 @@ describe('Modal Accessibility & Zero Document Content Logging', () => {
         'utf8'
       );
 
-      // All 3 use <Modal
+      // Verify modals use <Modal
       expect(uploadAreaCode).toContain('<Modal');
-      expect(apiKeyModalCode).toContain('<Modal');
       expect(checklistModalCode).toContain('<Modal');
 
       // Modal.tsx defines role="dialog" and aria-modal="true"

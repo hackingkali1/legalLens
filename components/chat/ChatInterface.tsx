@@ -4,7 +4,6 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User, Sparkles, AlertCircle, ExternalLink, ShieldCheck, Loader2 } from 'lucide-react';
 import { ChatMessage, Citation } from '@/types/chat';
 import { DocumentChunk } from '@/types/document';
-import { getSessionApiKey } from '../settings/ApiKeyModal';
 import { LEGAL_DISCLAIMER } from '@/lib/constants';
 import { getUserSafeErrorMessage } from '@/lib/validation/userSafeError';
 import { DisclaimerBanner } from '../layout/DisclaimerBanner';
@@ -74,18 +73,11 @@ export function ChatInterface({
     setIsLoading(true);
 
     try {
-      const customApiKey = getSessionApiKey();
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      };
-      if (customApiKey) {
-        headers['x-nvidia-api-key'] = customApiKey;
-        headers['x-openrouter-api-key'] = customApiKey;
-      }
-
       const res = await fetch('/api/chat', {
         method: 'POST',
-        headers,
+        headers: {
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
           question: query,
           chunks,

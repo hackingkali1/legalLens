@@ -1,18 +1,10 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import Link from 'next/link';
-import { Scale, GitCompare, FileText, KeyRound, Sparkles } from 'lucide-react';
-import { ApiKeyModal, getSessionApiKey } from '../settings/ApiKeyModal';
+import { Scale, GitCompare, FileText } from 'lucide-react';
 
 export function Navbar() {
-  const [isKeyModalOpen, setIsKeyModalOpen] = useState(false);
-  const [hasCustomKey, setHasCustomKey] = useState(false);
-
-  useEffect(() => {
-    setHasCustomKey(!!getSessionApiKey());
-  }, [isKeyModalOpen]);
-
   return (
     <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-200 shadow-2xs">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
@@ -54,30 +46,13 @@ export function Navbar() {
         </div>
 
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => setIsKeyModalOpen(true)}
-            aria-label="Open API Key settings"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors"
-          >
-            <KeyRound className="w-3.5 h-3.5 text-slate-500" />
-            <span className="hidden sm:inline">NVIDIA NIM Key:</span>
-            {hasCustomKey ? (
-              <span className="text-emerald-700 font-semibold flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
-                Session Connected
-              </span>
-            ) : (
-              <span className="text-slate-500">Configured / Setup</span>
-            )}
-          </button>
+          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-emerald-200 bg-emerald-50 text-xs font-medium text-emerald-800 shadow-2xs">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block animate-pulse" />
+            <span className="hidden sm:inline font-semibold">NVIDIA NIM:</span>
+            <span>Connected</span>
+          </div>
         </div>
       </div>
-
-      <ApiKeyModal
-        isOpen={isKeyModalOpen}
-        onClose={() => setIsKeyModalOpen(false)}
-        onKeySaved={() => setHasCustomKey(true)}
-      />
     </header>
   );
 }

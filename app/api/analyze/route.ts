@@ -13,12 +13,6 @@ export async function POST(req: NextRequest) {
     const rateLimitRes = enforceRateLimit(req, 120);
     if (rateLimitRes) return rateLimitRes;
 
-    const customApiKey =
-      req.headers.get('x-nvidia-api-key') ||
-      req.headers.get('x-openrouter-api-key') ||
-      req.headers.get('x-anthropic-api-key') ||
-      undefined;
-
     let body: unknown;
     try {
       body = await req.json();
@@ -42,7 +36,7 @@ export async function POST(req: NextRequest) {
       req.headers.get('x-skip-cache') === 'true' ||
       req.headers.get('x-force-refresh') === 'true';
 
-    const analysisOptions = { customApiKey, skipCache };
+    const analysisOptions = { skipCache };
 
     // Step-specific execution: Summary only
     if (step === 'summary') {
