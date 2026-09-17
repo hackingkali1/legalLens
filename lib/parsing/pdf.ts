@@ -1,3 +1,4 @@
+import './polyfills';
 import { PDFParse } from 'pdf-parse';
 import {
   PdfPasswordProtectedError,

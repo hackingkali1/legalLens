@@ -1,3 +1,4 @@
+import './polyfills';
 import { createWorker } from 'tesseract.js';
 import { PDFParse } from 'pdf-parse';
 

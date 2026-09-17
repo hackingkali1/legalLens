@@ -1,3 +1,4 @@
+import '@/lib/parsing/polyfills';
 import { NextRequest, NextResponse } from 'next/server';
 import { validateUploadedFile, validatePastedText } from '@/lib/parsing/validator';
 import { getUserSafeErrorMessage } from '@/lib/validation/userSafeError';
