@@ -15,6 +15,18 @@ export function getNvidiaModel(): string {
   return process.env.NVIDIA_MODEL || DEFAULT_MODEL;
 }
 
+export class NvidiaApiError extends Error {
+  status: number;
+  statusCode: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'NvidiaApiError';
+    this.status = status;
+    this.statusCode = status;
+  }
+}
+
 import fs from 'fs';
 import path from 'path';
 
@@ -165,12 +177,10 @@ export async function createChatCompletion(options: ChatCompletionOptions): Prom
 
     // If 401 Unauthorized (token format invalid), fail immediately
     if (lastStatus === 401) {
-      const err = new Error(
-        `NVIDIA_API_KEY is invalid or unauthorized (status 401): ${lastErrorDetail || 'Invalid credentials'}`
+      throw new NvidiaApiError(
+        `NVIDIA_API_KEY is invalid or unauthorized (status 401): ${lastErrorDetail || 'Invalid credentials'}`,
+        401
       );
-      (err as any).status = 401;
-      (err as any).statusCode = 401;
-      throw err;
     }
 
     console.warn(
@@ -180,36 +190,30 @@ export async function createChatCompletion(options: ChatCompletionOptions): Prom
 
   // If all models in cascade failed, provide clean human-readable error with status code
   if (lastStatus === 401 || lastStatus === 403) {
-    const err = new Error(
-      `NVIDIA_API_KEY is unauthorized for requested models (status ${lastStatus}): ${lastErrorDetail}`
+    throw new NvidiaApiError(
+      `NVIDIA_API_KEY is unauthorized for requested models (status ${lastStatus}): ${lastErrorDetail}`,
+      lastStatus
     );
-    (err as any).status = lastStatus;
-    (err as any).statusCode = lastStatus;
-    throw err;
   }
 
   if (lastStatus === 429) {
-    const err = new Error(
-      `NVIDIA NIM rate limit or quota exceeded (status 429): ${lastErrorDetail || 'Too many requests'}`
+    throw new NvidiaApiError(
+      `NVIDIA NIM rate limit or quota exceeded (status 429): ${lastErrorDetail || 'Too many requests'}`,
+      429
     );
-    (err as any).status = 429;
-    (err as any).statusCode = 429;
-    throw err;
   }
 
   if (lastStatus === 503) {
-    const err = new Error(
-      `NVIDIA NIM service unavailable or overloaded (status 503): ${lastErrorDetail || 'Service temporarily unavailable'}`
+    throw new NvidiaApiError(
+      `NVIDIA NIM service unavailable or overloaded (status 503): ${lastErrorDetail || 'Service temporarily unavailable'}`,
+      503
     );
-    (err as any).status = 503;
-    (err as any).statusCode = 503;
-    throw err;
   }
 
-  const err = new Error(`NVIDIA NIM API error (status ${lastStatus}): ${lastErrorDetail}`);
-  (err as any).status = lastStatus;
-  (err as any).statusCode = lastStatus;
-  throw err;
+  throw new NvidiaApiError(
+    `NVIDIA NIM API error (status ${lastStatus}): ${lastErrorDetail}`,
+    lastStatus
+  );
 }
 
 /**

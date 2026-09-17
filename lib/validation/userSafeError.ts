@@ -26,6 +26,20 @@ export function sanitizeLogSnippet(raw: string, maxLen = 180): string {
     .slice(0, maxLen);
 }
 
+interface ErrorWithStatus {
+  status?: number;
+  statusCode?: number;
+}
+
+function extractErrorStatus(err: unknown): number | undefined {
+  if (typeof err === 'object' && err !== null) {
+    const candidate = err as ErrorWithStatus;
+    if (typeof candidate.status === 'number') return candidate.status;
+    if (typeof candidate.statusCode === 'number') return candidate.statusCode;
+  }
+  return undefined;
+}
+
 /**
  * Ensures error messages returned to end users or UI are plain-language and never
  * expose internal Zod schema validation dumps, stack traces, or internal error objects.
@@ -37,7 +51,7 @@ export function getUserSafeErrorMessage(
   // Always log sanitized error server-side for developer debugging without leaking payloads or keys
   if (process.env.NODE_ENV !== 'production') {
     const errorName = err instanceof Error ? err.name : 'UnknownError';
-    const statusProp = (err as any)?.status || (err as any)?.statusCode;
+    const statusProp = extractErrorStatus(err);
     const rawMsg = err instanceof Error ? err.message : typeof err === 'string' ? err : 'Unknown';
     const cleanMsg = sanitizeLogSnippet(rawMsg);
     console.error(`[Internal Error Detail] ${errorName}${statusProp ? ` (status ${statusProp})` : ''}: ${cleanMsg}`);
@@ -128,8 +142,7 @@ export function classifyAnalysisError(err: unknown): AnalysisDiagnostic {
 
   const rawMsg = err instanceof Error ? err.message : String(err);
   const rawMessage = sanitizeLogSnippet(rawMsg, 200);
-  const statusProp = (err as any)?.status || (err as any)?.statusCode;
-  const statusNum = typeof statusProp === 'number' ? statusProp : undefined;
+  const statusNum = extractErrorStatus(err);
 
   // 1. Rate limit (429)
   if (
