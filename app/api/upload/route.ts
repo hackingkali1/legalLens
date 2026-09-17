@@ -1,14 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { validateUploadedFile, validatePastedText } from '@/lib/parsing/validator';
 import { getUserSafeErrorMessage } from '@/lib/validation/userSafeError';
-import { parsePdfBuffer } from '@/lib/parsing/pdf';
 import {
   PdfPasswordProtectedError,
   PdfCorruptedError,
   PdfUnsupportedFormatError,
   PdfNoSelectableTextError,
 } from '@/lib/parsing/errors';
-import { parseDocxBuffer } from '@/lib/parsing/docx';
 import { parseRawText } from '@/lib/parsing/text';
 import { splitIntoSections } from '@/lib/chunking/sectionSplitter';
 import { createDocumentChunks } from '@/lib/chunking/tokenChunker';
@@ -45,9 +43,11 @@ export async function POST(req: NextRequest) {
       fileType = validation.detectedType || 'txt';
 
       if (fileType === 'pdf') {
+        const { parsePdfBuffer } = await import('@/lib/parsing/pdf');
         const parsed = await parsePdfBuffer(buffer);
         rawText = parsed.text;
       } else if (fileType === 'docx') {
+        const { parseDocxBuffer } = await import('@/lib/parsing/docx');
         const parsed = await parseDocxBuffer(buffer);
         rawText = parsed.text;
       } else {
