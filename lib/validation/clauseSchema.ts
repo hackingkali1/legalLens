@@ -30,6 +30,19 @@ export const SectionSummarySchema = z.object({
   keyPoints: z.array(z.string()),
 });
 
+export const BatchSectionSummaryResponseSchema = z.object({
+  sectionSummaries: z.array(SectionSummarySchema),
+});
+
+export const DocumentOverviewSynthesisSchema = z.object({
+  overview: z.string(),
+  documentType: z.string(),
+  mainParties: z.array(z.string()).optional().default([]),
+  effectiveDateOrTerm: z.string().optional().default(''),
+  keyTakeaways: z.array(z.string()),
+  disclaimer: z.string().optional(),
+});
+
 export const DocumentSummaryResponseSchema = z.object({
   overview: z.string(),
   documentType: z.string(),

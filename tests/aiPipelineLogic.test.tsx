@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { detectAndClassifyClauses } from '@/lib/ai/analyzeClauses';
-import { generateDocumentSummary } from '@/lib/ai/analyzeDocument';
+import { generateDocumentSummary, batchDocumentSections } from '@/lib/ai/analyzeDocument';
 import { compareTwoDocuments } from '@/lib/ai/compareDocuments';
 import { CLAUSE_DETECTION_PROMPT } from '@/lib/prompts/clauses';
 import { DOCUMENT_SUMMARY_PROMPT } from '@/lib/prompts/summary';
@@ -372,6 +372,87 @@ describe('AI Pipeline Core Logic & Resilience Tests', () => {
       const { summary, updatedSections } = await generateDocumentSummary([]);
       expect(summary.overview).toBe('Empty document');
       expect(updatedSections).toEqual([]);
+    });
+
+    it('batching helper: groups sections respecting max count and character thresholds', () => {
+      const fiveSections: DocumentSection[] = Array.from({ length: 5 }, (_, i) => ({
+        id: `sec-${i + 1}`,
+        title: `Section ${i + 1}`,
+        originalText: `This is text for section ${i + 1} with some characters.`,
+        plainLanguageSummary: '',
+        keyPoints: [],
+        startIndex: i * 50,
+        endIndex: (i + 1) * 50,
+      }));
+
+      const batches = batchDocumentSections(fiveSections, 3500, 2);
+      expect(batches).toHaveLength(3); // 2 + 2 + 1
+      expect(batches[0]).toHaveLength(2);
+      expect(batches[1]).toHaveLength(2);
+      expect(batches[2]).toHaveLength(1);
+    });
+
+    it('multi-section batching: processes >3 sections in batches and synthesizes overview without truncation', async () => {
+      const multiSections: DocumentSection[] = Array.from({ length: 4 }, (_, i) => ({
+        id: `sec-${i + 1}`,
+        title: `Section ${i + 1}`,
+        originalText: `Substantive legal content for section ${i + 1}.`,
+        plainLanguageSummary: '',
+        keyPoints: [],
+        startIndex: i * 100,
+        endIndex: (i + 1) * 100,
+      }));
+
+      // Mock sequence: Batch 1 (secs 1-3), Batch 2 (sec 4), Synthesis Overview
+      const mockBatch1 = {
+        sectionSummaries: [
+          { sectionId: 'sec-1', plainLanguageSummary: 'Summary 1', keyPoints: ['Pt 1'] },
+          { sectionId: 'sec-2', plainLanguageSummary: 'Summary 2', keyPoints: ['Pt 2'] },
+          { sectionId: 'sec-3', plainLanguageSummary: 'Summary 3', keyPoints: ['Pt 3'] },
+        ],
+      };
+      const mockBatch2 = {
+        sectionSummaries: [
+          { sectionId: 'sec-4', plainLanguageSummary: 'Summary 4', keyPoints: ['Pt 4'] },
+        ],
+      };
+      const mockSynth = {
+        overview: 'Synthesized overall contract summary from all 4 sections.',
+        documentType: 'Commercial Contract',
+        mainParties: ['Party A', 'Party B'],
+        effectiveDateOrTerm: '12 months',
+        keyTakeaways: ['Key takeaway from batched analysis'],
+        disclaimer: LEGAL_DISCLAIMER,
+      };
+
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ choices: [{ message: { content: JSON.stringify(mockBatch1) } }] }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ choices: [{ message: { content: JSON.stringify(mockBatch2) } }] }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ choices: [{ message: { content: JSON.stringify(mockSynth) } }] }),
+        });
+
+      global.fetch = fetchMock;
+
+      const { summary, updatedSections } = await generateDocumentSummary(multiSections);
+
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(summary.documentType).toBe('Commercial Contract');
+      expect(summary.overview).toContain('Synthesized overall contract summary');
+      expect(updatedSections).toHaveLength(4);
+      expect(updatedSections[0].plainLanguageSummary).toBe('Summary 1');
+      expect(updatedSections[3].plainLanguageSummary).toBe('Summary 4');
     });
   });
 
