@@ -5,6 +5,8 @@ import { getUserSafeErrorMessage } from '@/lib/validation/userSafeError';
 import { sessionAnalysisCache } from '@/lib/cache/analysisCache';
 import { DocumentDiffResult } from '@/types/compare';
 
+export const maxDuration = 60;
+
 export async function POST(req: NextRequest) {
   try {
     const customApiKey =

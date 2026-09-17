@@ -3,6 +3,8 @@ import { DocumentChunk } from '@/types/document';
 import { answerDocumentQuestion } from '@/lib/ai/answerQuestion';
 import { getUserSafeErrorMessage } from '@/lib/validation/userSafeError';
 
+export const maxDuration = 60;
+
 export async function POST(req: NextRequest) {
   try {
     const customApiKey =

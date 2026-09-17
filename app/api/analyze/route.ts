@@ -4,6 +4,8 @@ import { generateDocumentSummary } from '@/lib/ai/analyzeDocument';
 import { detectAndClassifyClauses } from '@/lib/ai/analyzeClauses';
 import { getUserSafeErrorMessage, logAnalysisDiagnostic } from '@/lib/validation/userSafeError';
 
+export const maxDuration = 60;
+
 export async function POST(req: NextRequest) {
   try {
     const customApiKey =
